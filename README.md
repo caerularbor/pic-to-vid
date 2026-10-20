@@ -62,5 +62,12 @@ all settings avaliable in config.py
 
 **Bad Apple!!** was used for a demo due to all the memes lmao
 
-To use your own video, just change `VIDEO_PATH` in `config.py`, delete the `frames` folder, and re-run `python "vid formatting.py"`.
-``
+to use your own video, just change `VIDEO_PATH` in `config.py`, delete the `frames` folder, and re-run `python "vid formatting.py"`
+
+## download the video
+
+download `Bad Apple.mp4` from the
+[releases page](https://github.com/caerularbor/pic-to-vid/releases) and put it in
+this folder, then set `VIDEO_PATH` in `config.py` to its filename
+its too big lmao
+
