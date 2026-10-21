@@ -28,7 +28,7 @@ all settings avaliable in config.py
 
 | Setting | Default | What it does |
 |---|---|---|
-| `VIDEO_PATH` | the Bad Apple mp4 | the video to convert (change to any video file) |
+| `VIDEO_PATH` | the mp4 | the video to convert (change to any video file) |
 | `TARGET_FPS` | `60` | frames per second to sample the video at |
 | `START_OFFSET_SECONDS` | `30` | start from a random frame within the first N seconds (skips the mostly-black opening) |
 | `BLOCK_SIZE` | `12` | pixel size of each mosaic block — smaller = more detail/slower, larger = chunkier/faster |
