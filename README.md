@@ -11,7 +11,7 @@ web tool to convert any picture to any video through mosaic art
 picture is parsed into blocks and video is reconstructed purely through those blocks
 
 ## instructions
-
+open powershell, then paste in
 ```powershell
 pip install -r requirements.txt   # one time
 python "vid formatting.py"        # extract the video into frames (one time per video)
