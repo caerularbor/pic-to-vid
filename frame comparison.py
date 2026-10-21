@@ -1,5 +1,5 @@
 """
-Bad Apple frame comparison — fast rebuild + encode.
+Picture-to-video frame comparison — fast rebuild + encode.
 
 Workflow:
   1. Cut the picture into 64x64 pixel blocks (saved to a temp folder, deleted
@@ -55,34 +55,34 @@ def _make_temp_dir(prefix):
     return path
 
 
-def block_means(gray):
-    """Return a (rows, cols) grid of per-64x64-block mean values."""
+def block_means(gray, block):
+    """Return a (rows, cols) grid of per-block mean values."""
     h, w = gray.shape
-    rows, cols = h // BLOCK, w // BLOCK
+    rows, cols = h // block, w // block
     if rows == 0 or cols == 0:
         return np.zeros((0, 0))
-    cropped = gray[: rows * BLOCK, : cols * BLOCK]
-    return cropped.reshape(rows, BLOCK, cols, BLOCK).mean(axis=(1, 3))
+    cropped = gray[: rows * block, : cols * block]
+    return cropped.reshape(rows, block, cols, block).mean(axis=(1, 3))
 
 
-def build_picture_index(image_path):
-    """Split the picture into 64x64 tiles and build a luminance lookup index."""
+def build_picture_index(image_path, block):
+    """Split the picture into block x block tiles and build a luminance index."""
     img = cv2.imread(image_path, cv2.IMREAD_COLOR)
     if img is None:
         raise FileNotFoundError(f"Could not read image: {image_path}")
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    rows, cols = gray.shape[0] // BLOCK, gray.shape[1] // BLOCK
+    rows, cols = gray.shape[0] // block, gray.shape[1] // block
     if rows == 0 or cols == 0:
-        raise ValueError("Image is smaller than 64x64 pixels.")
+        raise ValueError(f"Image is smaller than {block}x{block} pixels.")
 
     tiles = np.asarray(
-        [img[r * BLOCK:(r + 1) * BLOCK, c * BLOCK:(c + 1) * BLOCK]
+        [img[r * block:(r + 1) * block, c * block:(c + 1) * block]
          for r in range(rows) for c in range(cols)],
         dtype=np.uint8,
-    )  # (M, 64, 64, 3)
+    )  # (M, block, block, 3)
 
-    means = block_means(gray).ravel().astype(np.float32)  # (M,)
+    means = block_means(gray, block).ravel().astype(np.float32)  # (M,)
     order = np.argsort(means)
     sorted_means = means[order]
     return img, tiles, order, sorted_means
@@ -102,40 +102,40 @@ def nearest_tile_indices(query_means, order, sorted_means):
     return order[closer]
 
 
-def rebuild_frame_from_gray(gray, tiles, order, sorted_means):
+def rebuild_frame_from_gray(gray, tiles, order, sorted_means, block):
     """Return (chosen_grid, rebuilt_frame) for one grayscale frame."""
-    means = block_means(gray)
+    means = block_means(gray, block)
     fr, fc = means.shape
     if fr == 0 or fc == 0:
         return None, None
 
     chosen_flat = nearest_tile_indices(means.ravel(), order, sorted_means)
-    gathered = tiles[chosen_flat]  # (fr*fc, 64, 64, 3)
+    gathered = tiles[chosen_flat]  # (fr*fc, block, block, 3)
     rebuilt = (
-        gathered.reshape(fr, fc, BLOCK, BLOCK, 3)
+        gathered.reshape(fr, fc, block, block, 3)
         .transpose(0, 2, 1, 3, 4)
-        .reshape(fr * BLOCK, fc * BLOCK, 3)
+        .reshape(fr * block, fc * block, 3)
     )
     return chosen_flat.reshape(fr, fc), rebuilt
 
 
 def _rebuild_one(args):
     """Rebuild a single frame (used by the worker thread pool)."""
-    path, tiles, order, sorted_means = args
+    path, tiles, order, sorted_means, block = args
     gray = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if gray is None:
         return None
-    _, rebuilt = rebuild_frame_from_gray(gray, tiles, order, sorted_means)
+    _, rebuilt = rebuild_frame_from_gray(gray, tiles, order, sorted_means, block)
     return rebuilt
 
 
-def render_slide_intro(chosen_grid, tiles, duration=INTRO_FRAMES):
+def render_slide_intro(chosen_grid, tiles, block, duration=INTRO_FRAMES):
     """
-    Animate the picture's 64x64 blocks sliding in (left-to-right, staggered)
+    Animate the picture's blocks sliding in (left-to-right, staggered)
     until they assemble the first frame's layout. Returns a list of frames.
     """
     fr, fc = chosen_grid.shape
-    height, width = fr * BLOCK, fc * BLOCK
+    height, width = fr * block, fc * block
     total = fr * fc
     stagger = duration * 0.55
 
@@ -148,15 +148,15 @@ def render_slide_intro(chosen_grid, tiles, duration=INTRO_FRAMES):
             local = (k - delay) / max(1, duration - stagger)
             q = 0.0 if local < 0.0 else (1.0 if local > 1.0 else local)
             ease = 1.0 - (1.0 - q) ** 3  # cubic ease-out
-            x = int(round((1.0 - ease) * -(width + BLOCK) + ease * (c * BLOCK)))
-            y = r * BLOCK
+            x = int(round((1.0 - ease) * -(width + block) + ease * (c * block)))
+            y = r * block
 
             tile = tiles[chosen_grid[r, c]]
             x0 = max(0, x)
-            x1 = min(width, x + BLOCK)
+            x1 = min(width, x + block)
             if x1 <= x0:
                 continue
-            canvas[y:y + BLOCK, x0:x1] = tile[:, (x0 - x):(x0 - x) + (x1 - x0)]
+            canvas[y:y + block, x0:x1] = tile[:, (x0 - x):(x0 - x) + (x1 - x0)]
         frames.append(canvas)
     return frames
 
@@ -201,7 +201,7 @@ class VideoWriter:
 
 
 def convert(image_path, frames_dir=None, video_path=None,
-            progress_cb=None, intro=None):
+            block_size=None, progress_cb=None, intro=None):
     """
     Rebuild every formatted frame from the picture's tiles and encode a
     browser-playable video. `progress_cb(done, total)` is called after each
@@ -210,22 +210,23 @@ def convert(image_path, frames_dir=None, video_path=None,
     """
     frames_dir = frames_dir or config.FRAMES_DIR
     video_path = video_path or config.RESULT_VIDEO
+    block_size = block_size or config.BLOCK_SIZE
     if intro is None:
         intro = config.ENABLE_INTRO
 
     image_blocks_dir = _make_temp_dir("image_blocks_")
     try:
-        img, tiles, order, sorted_means = build_picture_index(image_path)
+        img, tiles, order, sorted_means = build_picture_index(image_path, block_size)
 
         # 1) Optionally dump the picture's blocks into the temp folder (debug
         #    artifact; disabled by default because it's slow with small blocks).
         if config.SAVE_IMAGE_BLOCKS:
-            rows, cols = img.shape[0] // BLOCK, img.shape[1] // BLOCK
+            rows, cols = img.shape[0] // block_size, img.shape[1] // block_size
             for r in range(rows):
                 for c in range(cols):
                     cv2.imwrite(
                         os.path.join(image_blocks_dir, f"img_block_{r:04d}_{c:04d}.png"),
-                        img[r * BLOCK:(r + 1) * BLOCK, c * BLOCK:(c + 1) * BLOCK],
+                        img[r * block_size:(r + 1) * block_size, c * block_size:(c + 1) * block_size],
                     )
 
         frame_paths = sorted(glob.glob(os.path.join(frames_dir, "*")))
@@ -245,11 +246,11 @@ def convert(image_path, frames_dir=None, video_path=None,
 
         # First frame gives the layout + output dimensions.
         first_gray = cv2.imread(frame_paths[0], cv2.IMREAD_GRAYSCALE)
-        chosen0, rebuilt0 = rebuild_frame_from_gray(first_gray, tiles, order, sorted_means)
+        chosen0, rebuilt0 = rebuild_frame_from_gray(first_gray, tiles, order, sorted_means, block_size)
 
         # 2) Optional slide-in intro of the picture's blocks into the first frame.
         if intro and chosen0 is not None:
-            for intro_frame in render_slide_intro(chosen0, tiles):
+            for intro_frame in render_slide_intro(chosen0, tiles, block_size):
                 writer.write(intro_frame)
 
         if rebuilt0 is not None:
@@ -262,7 +263,7 @@ def convert(image_path, frames_dir=None, video_path=None,
         rest = frame_paths[1:]
         if rest:
             workers = config.MAX_WORKERS or min(os.cpu_count() or 1, 8)
-            args_iter = ((p, tiles, order, sorted_means) for p in rest)
+            args_iter = ((p, tiles, order, sorted_means, block_size) for p in rest)
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 for rebuilt in pool.map(_rebuild_one, args_iter, chunksize=32):
                     if rebuilt is None:
@@ -279,7 +280,7 @@ def convert(image_path, frames_dir=None, video_path=None,
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Rebuild Bad Apple frames from picture tiles.")
+    parser = argparse.ArgumentParser(description="Rebuild video frames from picture tiles.")
     parser.add_argument("image", help="path to the uploaded picture")
     parser.add_argument("--frames", default=config.FRAMES_DIR,
                         help="folder containing formatted frames (default from config.py)")
@@ -293,7 +294,8 @@ def main():
         if done % 100 == 0 or done == total:
             print(f"Rebuilt {done}/{total} frames ({max(0, total - done)} left)", flush=True)
 
-    convert(args.image, args.frames, args.video, progress, intro=not args.no_intro)
+    convert(args.image, args.frames, args.video,
+            progress_cb=progress, intro=not args.no_intro)
     print(f"Done. Video -> {args.video}", flush=True)
 
 

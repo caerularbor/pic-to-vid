@@ -1,5 +1,5 @@
 """
-Central configuration for the Bad Apple Converter.
+Central configuration for pic-to-vid.
 
 Edit the values below to reuse the tool on other videos, other resolutions, or
 different output settings. Every script reads its settings from here, so you
@@ -17,17 +17,16 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ---------------------------------------------------------------------------
 VIDEO_PATH = os.path.join(
     BASE_DIR,
-    "Bad Apple but i force it to work and live forever in my files.mp4",
+    "ovo.mp4",
 )
 
-# Frames per second to sample the video at.
-# The source is 60 fps native, so 60 is the exact (judder-free) rate.
-TARGET_FPS = 60
+# Frames per second to sample the video at. Set this to the video's native
+# frame rate (or a clean multiple of it) to avoid judder.
+TARGET_FPS = 24
 
 # Start the output from a random frame within the first N seconds of the video
-# (0 = always the very first frame). The Bad Apple opening is mostly black, so a
-# random start in the first ~30 seconds looks better.
-START_OFFSET_SECONDS = 30
+# (0 = always the very first frame). Set 0 to play the whole video from the start.
+START_OFFSET_SECONDS = 0
 
 # ---------------------------------------------------------------------------
 # Pixel block size for the mosaic. Each video frame is divided into blocks of
@@ -36,7 +35,7 @@ START_OFFSET_SECONDS = 30
 #   * Smaller block -> more detail, slower
 # Must be at least 1. 8 gives a fine mosaic.
 # ---------------------------------------------------------------------------
-BLOCK_SIZE = 12
+BLOCK_SIZE = 8
 
 # ---------------------------------------------------------------------------
 # Frame cache — extracted frames are stored here so extraction only runs once.
@@ -49,8 +48,8 @@ FRAMES_DIR = os.path.join(BASE_DIR, "frames")
 EXTRACT_JPEG_QUALITY = 5
 
 # Output width in pixels (height is auto-computed to keep aspect ratio).
-# The source is 1440x1080; rendering at half width (720) is ~4x faster with
-# little visible loss for a mosaic. Set 0 to keep the native resolution.
+# Downscaling is faster with little visible loss for a mosaic.
+# Set 0 to keep the native resolution.
 OUTPUT_WIDTH = 720
 
 # Whether to also dump the picture's individual blocks into a temp folder.
@@ -88,4 +87,4 @@ INTRO_FRAMES = 45  # intro length in frames (at TARGET_FPS); more = smoother sli
 HOST = "127.0.0.1"
 PORT = 8000
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploaded")
-HTML_FILE = "bad apple converter.html"  # served at "/" (relative to BASE_DIR)
+HTML_FILE = "pic to vid.html"  # served at "/" (relative to BASE_DIR)

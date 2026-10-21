@@ -1,9 +1,9 @@
 """
-Local web server for the Bad Apple Converter.
+Local web server for pic-to-vid.
 
 Run it, then open http://127.0.0.1:8000 in your browser. The page uploads a
-picture; this server runs the frame pipeline in a background thread and reports
-progress (frames processed / frames left) back to the page.
+picture (and optionally a video); this server runs the frame pipeline in a
+background thread and reports progress back to the page.
 
     python server.py
 """
@@ -14,9 +14,10 @@ import json
 import os
 import random
 import re
+import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import config
 
@@ -87,10 +88,10 @@ def get_progress():
     return p
 
 
-def conversion_worker(image_path):
+def conversion_worker(image_path, block_size):
     total_holder = [0]
     try:
-        # 1) Extract the Bad Apple frames once (skip if already done).
+        # 1) Extract the source video frames once (skip if already done).
         if not glob.glob(os.path.join(FRAMES_DIR, "*")):
             def extract_cb(done, total):
                 total_holder[0] = total
@@ -113,6 +114,7 @@ def conversion_worker(image_path):
             image_path,
             frames_dir=FRAMES_DIR,
             video_path=RESULT_VIDEO,
+            block_size=block_size,
             progress_cb=rebuild_cb,
         )
 
@@ -122,6 +124,43 @@ def conversion_worker(image_path):
     finally:
         with LOCK:
             STATE["running"] = False
+
+
+def _image_ext(content_type):
+    """Map a Content-Type to an image file extension (default .png)."""
+    ctype = (content_type or "").lower()
+    if "jpeg" in ctype or "jpg" in ctype:
+        return ".jpg"
+    if "png" in ctype:
+        return ".png"
+    if "gif" in ctype:
+        return ".gif"
+    if "webp" in ctype:
+        return ".webp"
+    if "bmp" in ctype:
+        return ".bmp"
+    return ".png"
+
+
+def _extract_worker(video_path, replace):
+    """Extract frames from a video in a background thread."""
+    def run():
+        try:
+            if replace:
+                shutil.rmtree(FRAMES_DIR, ignore_errors=True)
+
+            def extract_cb(done, total):
+                set_progress("extracting", done, total, "Extracting frames…")
+            VID_FMT.format_video(video_path=video_path, output_dir=FRAMES_DIR,
+                                 progress_cb=extract_cb)
+            set_progress("idle", 0, 0, "")
+        except Exception as exc:  # noqa: BLE001 - surface failure to the page
+            set_progress("error", 0, 0, f"Error: {exc}")
+        finally:
+            with LOCK:
+                STATE["running"] = False
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -216,13 +255,14 @@ class Handler(BaseHTTPRequestHandler):
         self._serve_file(full, CONTENT_TYPES.get(ext, "application/octet-stream"))
 
     def do_POST(self):
-        path = unquote(urlparse(self.path).path)
-        if path != "/api/convert":
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+
+        if path not in ("/api/convert", "/api/video"):
             self.send_error(404, "Not found")
             return
 
-        print(f"[POST] /api/convert  Content-Length={self.headers.get('Content-Length')} "
-              f"Expect={self.headers.get('Expect')!r} "
+        print(f"[POST] {path}  Content-Length={self.headers.get('Content-Length')} "
               f"Content-Type={self.headers.get('Content-Type')!r}", flush=True)
 
         # Respond to "Expect: 100-continue" so the browser actually sends the body.
@@ -234,45 +274,48 @@ class Handler(BaseHTTPRequestHandler):
         data = self.rfile.read(length)
         print(f"[POST] read {len(data)} bytes", flush=True)
         if not data:
-            self._send_json({"error": "No image data received"}, 400)
+            self._send_json({"error": "No data received"}, 400)
             return
 
         with LOCK:
             if STATE["running"]:
-                self._send_json({"error": "A conversion is already running"}, 409)
+                self._send_json({"error": "A job is already running"}, 409)
                 return
             STATE["running"] = True
 
-        # Determine the extension from Content-Type (robust even when the
-        # original filename contains non-ASCII characters, which would break
-        # the X-Filename header).
-        ctype = self.headers.get("Content-Type", "").lower()
-        if "jpeg" in ctype or "jpg" in ctype:
-            ext = ".jpg"
-        elif "png" in ctype:
-            ext = ".png"
-        elif "gif" in ctype:
-            ext = ".gif"
-        elif "webp" in ctype:
-            ext = ".webp"
-        elif "bmp" in ctype:
-            ext = ".bmp"
-        else:
-            ext = ".png"
+        # ---- video upload: extract frames from the user's video ----
+        if path == "/api/video":
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            video_path = os.path.join(UPLOAD_DIR, "uploaded_video.mp4")
+            with open(video_path, "wb") as f:
+                f.write(data)
+            print(f"Received video ({len(data)} bytes) -> {video_path}", flush=True)
+            set_progress("extracting", 0, 1, "Extracting frames…")
+            _extract_worker(video_path, replace=True)
+            self._send_json({"started": True})
+            return
+
+        # ---- picture upload + conversion ----
+        qs = parse_qs(parsed.query)
+        try:
+            block_size = int(qs.get("block_size", [str(config.BLOCK_SIZE)])[0])
+        except (TypeError, ValueError):
+            block_size = config.BLOCK_SIZE
+        block_size = max(1, min(32, block_size))
 
         os.makedirs(UPLOAD_DIR, exist_ok=True)
-        image_path = os.path.join(UPLOAD_DIR, "uploaded" + ext)
+        image_path = os.path.join(UPLOAD_DIR, "uploaded" + _image_ext(self.headers.get("Content-Type", "")))
         with open(image_path, "wb") as f:
             f.write(data)
-        print(f"Received image ({len(data)} bytes) -> {image_path}", flush=True)
+        print(f"Received image ({len(data)} bytes) -> {image_path} (block {block_size})", flush=True)
 
-        set_progress("extracting", 0, 1, "Starting…")
-        threading.Thread(target=conversion_worker, args=(image_path,), daemon=True).start()
+        set_progress("rebuilding", 0, 1, "Starting…")
+        threading.Thread(target=conversion_worker, args=(image_path, block_size), daemon=True).start()
         self._send_json({"started": True})
 
 
 def start_extraction():
-    """Extract the Bad Apple frames on first start, in the background."""
+    """Extract the source video's frames on first start, in the background."""
     if glob.glob(os.path.join(FRAMES_DIR, "*")):
         return  # frames already present
 
@@ -281,26 +324,14 @@ def start_extraction():
             return
         STATE["running"] = True
 
-    def run():
-        try:
-            def extract_cb(done, total):
-                set_progress("extracting", done, total, "Preparing Bad Apple frames…")
-            VID_FMT.format_video(progress_cb=extract_cb)
-            set_progress("idle", 0, 0, "")
-        except Exception as exc:  # noqa: BLE001 - surface failure to the page
-            set_progress("error", 0, 0, f"Error: {exc}")
-        finally:
-            with LOCK:
-                STATE["running"] = False
-
-    threading.Thread(target=run, daemon=True).start()
+    _extract_worker(config.VIDEO_PATH, replace=False)
 
 
 def main():
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     server.daemon_threads = True
     start_extraction()
-    print(f"Bad Apple Converter running at http://{HOST}:{PORT}", flush=True)
+    print(f"ovo running at http://{HOST}:{PORT}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
     try:
         server.serve_forever()

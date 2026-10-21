@@ -1,4 +1,4 @@
-# Bad Apple Converter — Python dependencies
+# pic-to-vid — Python dependencies
 # Install with:  pip install -r requirements.txt
 
 opencv-python==5.0.0.93
