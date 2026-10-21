@@ -1,4 +1,4 @@
-# Bad Apple Converter
+#pic to vid
 
 disclaimer: this was a vibe coded small project for a school hackathon
 if you dont like ai coded stuff im sorry me too
@@ -18,7 +18,7 @@ python "vid formatting.py"        # extract the video into frames (one time per 
 python server.py                  # start the local web page
 ```
 
-then open **http://127.0.0.1:8000**, drop in a picture, and hit **Convert to Bad Apple**.
+then open **http://127.0.0.1:8000**, drop in a picture, and hit **Convert**.
 
 ---
 
@@ -51,23 +51,14 @@ all settings avaliable in config.py
 |---|---|
 | [`config.py`](config.py) | All settings in one place — the only file you normally need to edit. |
 | [`server.py`](server.py) | Local web server. Serves the page, receives the uploaded picture, runs the conversion in the background, and reports progress. |
-| [`bad apple converter.html`](bad apple converter.html) | The web UI (neon-styled): drop zone, convert button, progress bar, and video player. |
 | [`vid formatting.py`](vid formatting.py) | Splits the video into individual frames (JPEGs) into `frames/`, using ffmpeg. |
 | [`frame comparison.py`](frame comparison.py) | The core mosaic engine: cuts the picture into blocks, matches each video block to the closest picture block, and encodes the result with ffmpeg. |
 | [`requirements.txt`](requirements.txt) | Python dependencies (`opencv-python`, `numpy`, `imageio-ffmpeg`). |
 
 ---
 
-## why bad apple?
+##demo
 
-**Bad Apple!!** was used for a demo due to all the memes lmao
-
-to use your own video, just change `VIDEO_PATH` in `config.py`, delete the `frames` folder, and re-run `python "vid formatting.py"`
-
-## download the video
-
-download `Bad Apple.mp4` from the
-[releases page](https://github.com/caerularbor/pic-to-vid/releases) and put it in
-this folder, then set `VIDEO_PATH` in `config.py` to its filename
-its too big lmao
+demo uses a small little vid from my friend
+sorry dude
 
